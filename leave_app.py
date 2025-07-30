@@ -9,7 +9,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 from io import BytesIO
 import json
 
-
 # --- Google Sheets Setup ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
@@ -25,8 +24,9 @@ def get_employee_names():
 
 def get_remaining_leave_by_type(name):
     df = pd.DataFrame(sheet.get_all_records())
-    person_df = df[df['ชื่อ'] == name]
-    totals = {'ลาพักร้อน': 12, 'ลาป่วย': 30, 'ลากิจ': 5}
+    person_df = df[df['ชื่อ'] == name].copy()
+    person_df['จำนวนวันลา'] = pd.to_numeric(person_df['จำนวนวันลา'], errors='coerce')
+    totals = {'ลาพักร้อน': 10, 'ลาป่วย': 30, 'ลากิจ': 6}
     used = person_df.groupby('ประเภทการลา')['จำนวนวันลา'].sum().to_dict()
     remaining = {k: totals[k] - used.get(k, 0) for k in totals}
     return remaining
@@ -48,9 +48,16 @@ def get_leave_history_filtered(name, year, month):
         df = df[df['วันที่เริ่ม'].dt.month == int(month)]
     return df
 
-def calculate_leave_days(start, end, half_day):
-    delta = (end - start).days + 1
-    return 0.5 if half_day else delta
+def calculate_leave_days(start, end, type_leave, start_time=None, end_time=None):
+    if type_leave == "รายชั่วโมง":
+        fmt = "%H:%M"
+        time_start = datetime.datetime.strptime(start_time, fmt)
+        time_end = datetime.datetime.strptime(end_time, fmt)
+        hours = (time_end - time_start).seconds / 3600
+        return round(hours / 8, 2)
+    elif "ครึ่งวัน" in type_leave:
+        return 0.5
+    return (end - start).days + 1
 
 def create_pdf(data):
     def thai_date(date_str):
@@ -63,17 +70,14 @@ def create_pdf(data):
     pdf.add_font("THSarabunNew", "", "./font/THSarabunNew.ttf", uni=True)
     pdf.set_font("THSarabunNew", size=16)
 
-    # Center Logo
     pdf.image("./logo/logo.jpeg", x=(210 - 30) / 2, y=10, w=30)
     pdf.ln(40)
 
-    # Company Header
     pdf.set_font_size(18)
     pdf.cell(0, 10, "บริษัท ทีไอ การบัญชีและกฎหมาย จำกัด", ln=True, align="C")
     pdf.set_font_size(12)
     pdf.cell(0, 10, "เอกสารใช้สำหรับภายในบริษัทเท่านั้น", ln=True, align="C")
 
-    # Title & Notice
     pdf.set_font_size(16)
     pdf.cell(0, 10, "ใบคำขอลาหยุดงาน", ln=True, align="C")
     pdf.set_draw_color(0, 0, 0)
@@ -81,7 +85,6 @@ def create_pdf(data):
     pdf.set_text_color(0, 0, 0)
     pdf.ln(15)
 
-    # Table-like Body
     pdf.set_font_size(16)
     col_width = 50
     for key, value in data.items():
@@ -92,7 +95,10 @@ def create_pdf(data):
                 pass
         pdf.set_fill_color(230, 230, 230)
         pdf.cell(col_width, 10, key, border=1, fill=True)
-        pdf.cell(0, 10, str(value), border=1, ln=True)
+        if key == "เหตุผล":
+            pdf.multi_cell(0, 10, str(value), border=1)
+        else:
+            pdf.cell(0, 10, str(value), border=1, ln=True)
 
     pdf.ln(20)
     pdf.cell(0, 10, "ลงชื่อ.......................................................", ln=True, align="R")
@@ -154,11 +160,23 @@ st.markdown(
 )
 st.title("📝 แบบฟอร์มการลา")
 ชื่อ = st.selectbox("ชื่อ", names, key="main_name")
-ลาเป็น = st.radio("ลาเป็น", ["เต็มวัน", "ครึ่งวัน"])
+ลาเป็น = st.radio("ลาเป็น", ["เต็มวัน", "ครึ่งวันเช้า", "ครึ่งวันบ่าย", "รายชั่วโมง"])
 ประเภทการลา = st.selectbox("ประเภทการลา", ["ลาพักร้อน", "ลาป่วย", "ลากิจ"])
 start_date = st.date_input("วันที่เริ่ม")
 end_date = st.date_input("วันที่สิ้นสุด")
 reason = st.text_area("เหตุผลการลา")
+
+start_time = end_time = ""
+if ลาเป็น == "รายชั่วโมง":
+    start_time = st.time_input("เวลาเริ่มลา", value=datetime.time(8, 30)).strftime("%H:%M")
+    end_time = st.time_input("เวลาสิ้นสุดลา", value=datetime.time(17, 30)).strftime("%H:%M")
+else:
+    if ลาเป็น == "ครึ่งวันเช้า":
+        start_time, end_time = "08:30", "12:00"
+    elif ลาเป็น == "ครึ่งวันบ่าย":
+        start_time, end_time = "13:00", "17:30"
+    else:
+        start_time, end_time = "08:30", "17:30"
 
 is_valid = True
 if ชื่อ == "-กรุณาเลือก-":
@@ -173,9 +191,12 @@ if end_date < start_date:
     st.warning("วันที่สิ้นสุดต้องตรงหรือหลังจากวันที่เริ่ม")
     is_valid = False
 
+if ประเภทการลา == "ลากิจ" and (start_date - datetime.date.today()).days < 3:
+    st.warning("วันลากิจต้องส่งลาล่วงหน้าอย่างน้อย 3 วัน")
+    is_valid = False
+
 if is_valid and st.button("ส่งแบบฟอร์ม"):
-    half_day = ลาเป็น == "ครึ่งวัน"
-    leave_days = calculate_leave_days(start_date, end_date, half_day)
+    leave_days = calculate_leave_days(start_date, end_date, ลาเป็น, start_time, end_time)
 
     submission = {
         "ชื่อ": ชื่อ,
@@ -183,7 +204,9 @@ if is_valid and st.button("ส่งแบบฟอร์ม"):
         "ประเภทการลา": ประเภทการลา,
         "วันที่เริ่ม": str(start_date),
         "วันที่สิ้นสุด": str(end_date),
-        "คิดเป็นจำนวนวันลา": f"{leave_days} วัน",
+        "เวลาเริ่มลา": start_time,
+        "เวลาสิ้นสุดลา": end_time,
+        "คิดเป็นจำนวนวันลา": leave_days,
         "เหตุผล": reason,
         "เวลาส่ง": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
