@@ -115,26 +115,37 @@ def create_pdf(data):
 def save_to_sheet(data):
     sheet.append_row(list(data.values()))
 
+# Expand sidebar width using HTML style
+st.markdown("""
+<style>
+    section[data-testid="stSidebar"] {
+        width: 400px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # --- Sidebar Section: Leave History Viewer ---
 st.sidebar.title("📁 ดูประวัติการลา")
 names = get_employee_names()
 sidebar_name = st.sidebar.selectbox("เลือกชื่อพนักงาน", names, key="sidebar_name")
 
 if sidebar_name != "-กรุณาเลือก-":
-    st.sidebar.markdown("---\n### 📌 ประวัติล่าสุด")
-    latest = get_latest_leave(sidebar_name)
-    if isinstance(latest, dict):
-        for k, v in latest.items():
-            st.sidebar.write(f"{k}: {v}")
-    else:
-        st.sidebar.write(latest)
-
-    st.sidebar.markdown("---\n### 📊 สิทธิคงเหลือ")
+    st.sidebar.markdown("---\n### 📊 สิทธิการลาคงเหลือ")
     remaining_by_type = get_remaining_leave_by_type(sidebar_name)
     for leave_type, days_left in remaining_by_type.items():
         st.sidebar.write(f"{leave_type}: {days_left} วัน")
 
-    st.sidebar.markdown("---\n### 🗓️ เลือกช่วงเวลา")
+    st.sidebar.markdown("---\n### 📌 การลาครั้งล่าสุด")
+    latest = get_latest_leave(sidebar_name)
+    if isinstance(latest, dict):
+        keys_to_show = ["ชื่อ", "ลาเป็น", "ประเภทการลา", "วันที่เริ่ม", "คิดเป็นจำนวนวันลา", "เหตุผล"]
+        for key in keys_to_show:
+            if key in latest:
+                st.sidebar.write(f"{key}: {latest[key]}")
+    else:
+        st.sidebar.write(latest)
+
+    st.sidebar.markdown("---\n### 🗓️ ดูประวัติการลาทั้งหมด ตามช่วงเวลา")
     this_year = datetime.datetime.now().year
     years = list(range(this_year - 5, this_year + 1))
     months = ['ทั้งหมด'] + [str(i) for i in range(1, 13)]
