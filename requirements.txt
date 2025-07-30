@@ -4,4 +4,3 @@ fpdf2
 gspread
 oauth2client
 openpyxl
-json
