@@ -9,7 +9,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 from io import BytesIO
 import json
 
-
 # --- Google Sheets Setup ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
@@ -25,7 +24,8 @@ def get_employee_names():
 
 def get_remaining_leave_by_type(name):
     df = pd.DataFrame(sheet.get_all_records())
-    person_df = df[df['ชื่อ'] == name]
+    person_df = df[df['ชื่อ'] == name].copy()
+    person_df['จำนวนวันลา'] = pd.to_numeric(person_df['จำนวนวันลา'], errors='coerce').fillna(0)
     totals = {'ลาพักร้อน': 12, 'ลาป่วย': 30, 'ลากิจ': 5}
     used = person_df.groupby('ประเภทการลา')['จำนวนวันลา'].sum().to_dict()
     remaining = {k: totals[k] - used.get(k, 0) for k in totals}
@@ -91,8 +91,12 @@ def create_pdf(data):
             except:
                 pass
         pdf.set_fill_color(230, 230, 230)
-        pdf.cell(col_width, 10, key, border=1, fill=True)
-        pdf.cell(0, 10, str(value), border=1, ln=True)
+        if key == "เหตุผล":
+            pdf.cell(col_width, 30, key, border=1, fill=True)
+            pdf.multi_cell(0, 10, str(value), border=1)
+        else:
+            pdf.cell(col_width, 10, key, border=1, fill=True)
+            pdf.cell(0, 10, str(value), border=1, ln=True)
 
     pdf.ln(20)
     pdf.cell(0, 10, "ลงชื่อ.......................................................", ln=True, align="R")
