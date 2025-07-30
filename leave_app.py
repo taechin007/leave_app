@@ -157,8 +157,11 @@ if sidebar_name != "-กรุณาเลือก-":
     history_df = get_leave_history_filtered(sidebar_name, selected_year, selected_month)
     if not history_df.empty:
         st.sidebar.dataframe(history_df)
-        total_used = history_df['จำนวนวันลา'].astype(float).sum()
-        st.sidebar.markdown(f"**สิทธิวันลาใช้ไปในช่วงเวลานี้: {total_used} วัน**")
+        history_df['จำนวนวันลา'] = pd.to_numeric(history_df['จำนวนวันลา'], errors='coerce')
+        used_summary = history_df.groupby('ประเภทการลา')['จำนวนวันลา'].sum()
+        st.sidebar.markdown("**สิทธิวันลาใช้ไปในช่วงเวลานี้:**")
+        for leave_type, amount in used_summary.items():
+            st.sidebar.write(f"{leave_type}: {amount} วัน")
     else:
         st.sidebar.info("ไม่พบข้อมูลการลา")
 
