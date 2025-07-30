@@ -7,10 +7,13 @@ import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from io import BytesIO
+import json
+
 
 # --- Google Sheets Setup ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("google_creds.json", scope)
+creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 sheet = client.open("EmployeeLeaveRecords").worksheet("Records")
 name_sheet = client.open("EmployeeLeaveRecords").worksheet("EmployeeNames")
