@@ -22,14 +22,15 @@ def get_employee_names():
     names = [row[0] for row in name_sheet.get_all_values()[1:] if row and row[0]]
     return ["-กรุณาเลือก-"] + names
 
-def get_remaining_leave_by_type(name):
+def get_remaining_leave_by_type(name, year):
     df = pd.DataFrame(sheet.get_all_records())
-    person_df = df[df['ชื่อ'] == name].copy()
+    df['วันที่เริ่ม'] = pd.to_datetime(df['วันที่เริ่ม'], errors='coerce')
+    person_df = df[(df['ชื่อ'] == name) & (df['วันที่เริ่ม'].dt.year == year)].copy()
     person_df['จำนวนวันลา'] = pd.to_numeric(person_df['จำนวนวันลา'], errors='coerce')
     totals = {'ลาพักร้อน': 10, 'ลาป่วย': 30, 'ลากิจ': 6}
     used = person_df.groupby('ประเภทการลา')['จำนวนวันลา'].sum().to_dict()
     remaining = {k: totals[k] - used.get(k, 0) for k in totals}
-    return remaining
+    return remaining, used
 
 def get_latest_leave(name):
     df = pd.DataFrame(sheet.get_all_records())
@@ -97,6 +98,7 @@ def create_pdf(data):
         pdf.cell(col_width, 10, key, border=1, fill=True)
         if key == "เหตุผล":
             pdf.multi_cell(0, 10, str(value), border=1)
+            pdf.ln(0.5)
         else:
             pdf.cell(0, 10, str(value), border=1, ln=True)
 
@@ -130,10 +132,11 @@ names = get_employee_names()
 sidebar_name = st.sidebar.selectbox("เลือกชื่อพนักงาน", names, key="sidebar_name")
 
 if sidebar_name != "-กรุณาเลือก-":
+    current_year = datetime.datetime.now().year
     st.sidebar.markdown("---\n### 📊 สิทธิการลาคงเหลือ")
-    remaining_by_type = get_remaining_leave_by_type(sidebar_name)
-    for leave_type, days_left in remaining_by_type.items():
-        st.sidebar.write(f"{leave_type}: {days_left} วัน")
+    remaining_by_type, used_by_type = get_remaining_leave_by_type(sidebar_name, current_year)
+    for leave_type in remaining_by_type:
+        st.sidebar.write(f"{leave_type}: {remaining_by_type[leave_type]} วัน")
 
     st.sidebar.markdown("---\n### 📌 การลาครั้งล่าสุด")
     latest = get_latest_leave(sidebar_name)
@@ -146,8 +149,7 @@ if sidebar_name != "-กรุณาเลือก-":
         st.sidebar.write(latest)
 
     st.sidebar.markdown("---\n### 🗓️ ดูประวัติการลาทั้งหมด ตามช่วงเวลา")
-    this_year = datetime.datetime.now().year
-    years = list(range(this_year - 5, this_year + 1))
+    years = list(range(current_year - 5, current_year + 1))
     months = ['ทั้งหมด'] + [str(i) for i in range(1, 13)]
     selected_year = st.sidebar.selectbox("ปี", years[::-1])
     selected_month = st.sidebar.selectbox("เดือน", months)
@@ -155,6 +157,8 @@ if sidebar_name != "-กรุณาเลือก-":
     history_df = get_leave_history_filtered(sidebar_name, selected_year, selected_month)
     if not history_df.empty:
         st.sidebar.dataframe(history_df)
+        total_used = history_df['จำนวนวันลา'].astype(float).sum()
+        st.sidebar.markdown(f"**สิทธิวันลาใช้ไปในช่วงเวลานี้: {total_used} วัน**")
     else:
         st.sidebar.info("ไม่พบข้อมูลการลา")
 
@@ -200,6 +204,10 @@ if start_date < datetime.date.today():
 
 if end_date < start_date:
     st.warning("วันที่สิ้นสุดต้องตรงหรือหลังจากวันที่เริ่ม")
+    is_valid = False
+
+if not reason.strip():
+    st.warning("กรุณากรอกเหตุผลการลา")
     is_valid = False
 
 if ประเภทการลา == "ลากิจ" and (start_date - datetime.date.today()).days < 3:
