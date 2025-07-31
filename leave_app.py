@@ -233,12 +233,16 @@ if ประเภทการลา == "ลาพักร้อน":
 if ชื่อ != "-กรุณาเลือก-":
     current_year = datetime.datetime.now().year
     remaining, _ = get_remaining_leave_by_type(ชื่อ, current_year)
+    leave_days_to_request = calculate_leave_days(start_date, end_date, ลาเป็น, start_time, end_time)
     if remaining.get(ประเภทการลา, 0) <= 0:
         st.warning(f"สิทธิการลาของคุณสำหรับ '{ประเภทการลา}' หมดแล้ว ไม่สามารถส่งแบบฟอร์มได้")
         is_valid = False
+    elif leave_days_to_request > remaining.get(ประเภทการลา, 0):
+        st.warning(f"จำนวนวันที่ขอลามากกว่าสิทธิที่เหลือสำหรับ '{ประเภทการลา}' ({remaining.get(ประเภทการลา, 0)} วัน)")
+        is_valid = False
 
 if is_valid and st.button("ส่งแบบฟอร์ม"):
-    leave_days = calculate_leave_days(start_date, end_date, ลาเป็น, start_time, end_time)
+    leave_days = leave_days_to_request
 
     bangkok_tz = pytz.timezone("Asia/Bangkok")
     now_th = datetime.datetime.now(bangkok_tz)
