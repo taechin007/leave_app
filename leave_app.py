@@ -8,6 +8,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from io import BytesIO
 import json
+import pytz
 
 # --- Google Sheets Setup ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -220,6 +221,9 @@ if ประเภทการลา == "ลากิจ" and (start_date - date
 if is_valid and st.button("ส่งแบบฟอร์ม"):
     leave_days = calculate_leave_days(start_date, end_date, ลาเป็น, start_time, end_time)
 
+    bangkok_tz = pytz.timezone("Asia/Bangkok")
+    now_th = datetime.datetime.now(bangkok_tz)
+
     submission = {
         "ชื่อ": ชื่อ,
         "ลาเป็น": ลาเป็น,
@@ -230,7 +234,7 @@ if is_valid and st.button("ส่งแบบฟอร์ม"):
         "เวลาสิ้นสุดลา": end_time,
         "คิดเป็นจำนวนวันลา": leave_days,
         "เหตุผล": reason,
-        "เวลาส่ง": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "เวลาส่ง": now_th.strftime("%Y-%m-%d %H:%M:%S")
     }
 
     save_to_sheet(submission)
