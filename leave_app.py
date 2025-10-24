@@ -8,6 +8,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from io import BytesIO
 import json
+import pytz
 
 # --- Google Sheets Setup ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -22,14 +23,15 @@ def get_employee_names():
     names = [row[0] for row in name_sheet.get_all_values()[1:] if row and row[0]]
     return ["-กรุณาเลือก-"] + names
 
-def get_remaining_leave_by_type(name):
+def get_remaining_leave_by_type(name, year):
     df = pd.DataFrame(sheet.get_all_records())
-    person_df = df[df['ชื่อ'] == name].copy()
-    person_df['จำนวนวันลา'] = pd.to_numeric(person_df['จำนวนวันลา'], errors='coerce').fillna(0)
-    totals = {'ลาพักร้อน': 12, 'ลาป่วย': 30, 'ลากิจ': 5}
+    df['วันที่เริ่ม'] = pd.to_datetime(df['วันที่เริ่ม'], errors='coerce')
+    person_df = df[(df['ชื่อ'] == name) & (df['วันที่เริ่ม'].dt.year == year)].copy()
+    person_df['จำนวนวันลา'] = pd.to_numeric(person_df['จำนวนวันลา'], errors='coerce')
+    totals = {'ลาพักร้อน': 6, 'ลาป่วย': 30, 'ลากิจ': 6}
     used = person_df.groupby('ประเภทการลา')['จำนวนวันลา'].sum().to_dict()
     remaining = {k: totals[k] - used.get(k, 0) for k in totals}
-    return remaining
+    return remaining, used
 
 def get_latest_leave(name):
     df = pd.DataFrame(sheet.get_all_records())
@@ -48,9 +50,16 @@ def get_leave_history_filtered(name, year, month):
         df = df[df['วันที่เริ่ม'].dt.month == int(month)]
     return df
 
-def calculate_leave_days(start, end, half_day):
-    delta = (end - start).days + 1
-    return 0.5 if half_day else delta
+def calculate_leave_days(start, end, type_leave, start_time=None, end_time=None):
+    if type_leave == "รายชั่วโมง":
+        fmt = "%H:%M"
+        time_start = datetime.datetime.strptime(start_time, fmt)
+        time_end = datetime.datetime.strptime(end_time, fmt)
+        hours = (time_end - time_start).seconds / 3600
+        return round(hours / 8, 2)
+    elif "ครึ่งวัน" in type_leave:
+        return 0.5
+    return (end - start).days + 1
 
 def create_pdf(data):
     def thai_date(date_str):
@@ -63,17 +72,14 @@ def create_pdf(data):
     pdf.add_font("THSarabunNew", "", "./font/THSarabunNew.ttf", uni=True)
     pdf.set_font("THSarabunNew", size=16)
 
-    # Center Logo
     pdf.image("./logo/logo.jpeg", x=(210 - 30) / 2, y=10, w=30)
     pdf.ln(40)
 
-    # Company Header
     pdf.set_font_size(18)
     pdf.cell(0, 10, "บริษัท ทีไอ การบัญชีและกฎหมาย จำกัด", ln=True, align="C")
     pdf.set_font_size(12)
     pdf.cell(0, 10, "เอกสารใช้สำหรับภายในบริษัทเท่านั้น", ln=True, align="C")
 
-    # Title & Notice
     pdf.set_font_size(16)
     pdf.cell(0, 10, "ใบคำขอลาหยุดงาน", ln=True, align="C")
     pdf.set_draw_color(0, 0, 0)
@@ -81,7 +87,6 @@ def create_pdf(data):
     pdf.set_text_color(0, 0, 0)
     pdf.ln(15)
 
-    # Table-like Body
     pdf.set_font_size(16)
     col_width = 50
     for key, value in data.items():
@@ -91,11 +96,11 @@ def create_pdf(data):
             except:
                 pass
         pdf.set_fill_color(230, 230, 230)
+        pdf.cell(col_width, 10, key, border=1, fill=True)
         if key == "เหตุผล":
-            pdf.cell(col_width, 30, key, border=1, fill=True)
             pdf.multi_cell(0, 10, str(value), border=1)
+            pdf.ln(0.5)
         else:
-            pdf.cell(col_width, 10, key, border=1, fill=True)
             pdf.cell(0, 10, str(value), border=1, ln=True)
 
     pdf.ln(20)
@@ -113,28 +118,39 @@ def create_pdf(data):
 def save_to_sheet(data):
     sheet.append_row(list(data.values()))
 
+# Expand sidebar width using HTML style
+st.markdown("""
+<style>
+    section[data-testid="stSidebar"] {
+        width: 400px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # --- Sidebar Section: Leave History Viewer ---
 st.sidebar.title("📁 ดูประวัติการลา")
 names = get_employee_names()
 sidebar_name = st.sidebar.selectbox("เลือกชื่อพนักงาน", names, key="sidebar_name")
 
 if sidebar_name != "-กรุณาเลือก-":
-    st.sidebar.markdown("---\n### 📌 ประวัติล่าสุด")
+    current_year = datetime.datetime.now().year
+    st.sidebar.markdown("---\n### 📊 สิทธิการลาคงเหลือ")
+    remaining_by_type, used_by_type = get_remaining_leave_by_type(sidebar_name, current_year)
+    for leave_type in remaining_by_type:
+        st.sidebar.write(f"{leave_type}: {remaining_by_type[leave_type]} วัน")
+
+    st.sidebar.markdown("---\n### 📌 การลาครั้งล่าสุด")
     latest = get_latest_leave(sidebar_name)
     if isinstance(latest, dict):
-        for k, v in latest.items():
-            st.sidebar.write(f"{k}: {v}")
+        keys_to_show = ["ชื่อ", "ลาเป็น", "ประเภทการลา", "วันที่เริ่ม", "คิดเป็นจำนวนวันลา", "เหตุผล"]
+        for key in keys_to_show:
+            if key in latest:
+                st.sidebar.write(f"{key}: {latest[key]}")
     else:
         st.sidebar.write(latest)
 
-    st.sidebar.markdown("---\n### 📊 สิทธิคงเหลือ")
-    remaining_by_type = get_remaining_leave_by_type(sidebar_name)
-    for leave_type, days_left in remaining_by_type.items():
-        st.sidebar.write(f"{leave_type}: {days_left} วัน")
-
-    st.sidebar.markdown("---\n### 🗓️ เลือกช่วงเวลา")
-    this_year = datetime.datetime.now().year
-    years = list(range(this_year - 5, this_year + 1))
+    st.sidebar.markdown("---\n### 🗓️ ดูประวัติการลาทั้งหมด ตามช่วงเวลา")
+    years = list(range(current_year - 5, current_year + 1))
     months = ['ทั้งหมด'] + [str(i) for i in range(1, 13)]
     selected_year = st.sidebar.selectbox("ปี", years[::-1])
     selected_month = st.sidebar.selectbox("เดือน", months)
@@ -142,6 +158,11 @@ if sidebar_name != "-กรุณาเลือก-":
     history_df = get_leave_history_filtered(sidebar_name, selected_year, selected_month)
     if not history_df.empty:
         st.sidebar.dataframe(history_df)
+        history_df['จำนวนวันลา'] = pd.to_numeric(history_df['จำนวนวันลา'], errors='coerce')
+        used_summary = history_df.groupby('ประเภทการลา')['จำนวนวันลา'].sum()
+        st.sidebar.markdown("**สิทธิวันลาใช้ไปในช่วงเวลานี้:**")
+        for leave_type, amount in used_summary.items():
+            st.sidebar.write(f"{leave_type}: {amount} วัน")
     else:
         st.sidebar.info("ไม่พบข้อมูลการลา")
 
@@ -158,11 +179,27 @@ st.markdown(
 )
 st.title("📝 แบบฟอร์มการลา")
 ชื่อ = st.selectbox("ชื่อ", names, key="main_name")
-ลาเป็น = st.radio("ลาเป็น", ["เต็มวัน", "ครึ่งวัน"])
+ลาเป็น = st.radio("ลาเป็น", ["เต็มวัน", "ครึ่งวันเช้า", "ครึ่งวันบ่าย", "รายชั่วโมง"])
 ประเภทการลา = st.selectbox("ประเภทการลา", ["ลาพักร้อน", "ลาป่วย", "ลากิจ"])
+
+if ประเภทการลา == "ลาพักร้อน":
+    st.info("การลาพักร้อน จะต้องคำนึงถึงความคืบหน้าของงาน เเละผลงานของตนเองเป็นสำคัญ")
+
 start_date = st.date_input("วันที่เริ่ม")
 end_date = st.date_input("วันที่สิ้นสุด")
 reason = st.text_area("เหตุผลการลา")
+
+start_time = end_time = ""
+if ลาเป็น == "รายชั่วโมง":
+    start_time = st.time_input("เวลาเริ่มลา", value=datetime.time(8, 30)).strftime("%H:%M")
+    end_time = st.time_input("เวลาสิ้นสุดลา", value=datetime.time(17, 30)).strftime("%H:%M")
+else:
+    if ลาเป็น == "ครึ่งวันเช้า":
+        start_time, end_time = "08:30", "12:00"
+    elif ลาเป็น == "ครึ่งวันบ่าย":
+        start_time, end_time = "13:00", "17:30"
+    else:
+        start_time, end_time = "08:30", "17:30"
 
 is_valid = True
 if ชื่อ == "-กรุณาเลือก-":
@@ -177,9 +214,38 @@ if end_date < start_date:
     st.warning("วันที่สิ้นสุดต้องตรงหรือหลังจากวันที่เริ่ม")
     is_valid = False
 
+if not reason.strip():
+    st.warning("กรุณากรอกเหตุผลการลา")
+    is_valid = False
+
+if ประเภทการลา == "ลากิจ" and (start_date - datetime.date.today()).days < 3:
+    st.warning("วันลากิจต้องส่งลาล่วงหน้าอย่างน้อย 3 วัน")
+    is_valid = False
+
+if ประเภทการลา == "ลาพักร้อน":
+    if (start_date - datetime.date.today()).days < 3:
+        st.warning("ลาพักร้อนต้องส่งลาล่วงหน้าอย่างน้อย 3 วัน")
+        is_valid = False
+    if (end_date - start_date).days + 1 > 2:
+        st.warning("ลาพักร้อนไม่สามารถลาต่อเนื่องเกิน 2 วันได้")
+        is_valid = False
+
+if ชื่อ != "-กรุณาเลือก-":
+    current_year = datetime.datetime.now().year
+    remaining, _ = get_remaining_leave_by_type(ชื่อ, current_year)
+    leave_days_to_request = calculate_leave_days(start_date, end_date, ลาเป็น, start_time, end_time)
+    if remaining.get(ประเภทการลา, 0) <= 0:
+        st.warning(f"สิทธิการลาของคุณสำหรับ '{ประเภทการลา}' หมดแล้ว ไม่สามารถส่งแบบฟอร์มได้")
+        is_valid = False
+    elif leave_days_to_request > remaining.get(ประเภทการลา, 0):
+        st.warning(f"จำนวนวันที่ขอลามากกว่าสิทธิที่เหลือสำหรับ '{ประเภทการลา}' ({remaining.get(ประเภทการลา, 0)} วัน)")
+        is_valid = False
+
 if is_valid and st.button("ส่งแบบฟอร์ม"):
-    half_day = ลาเป็น == "ครึ่งวัน"
-    leave_days = calculate_leave_days(start_date, end_date, half_day)
+    leave_days = leave_days_to_request
+
+    bangkok_tz = pytz.timezone("Asia/Bangkok")
+    now_th = datetime.datetime.now(bangkok_tz)
 
     submission = {
         "ชื่อ": ชื่อ,
@@ -187,9 +253,11 @@ if is_valid and st.button("ส่งแบบฟอร์ม"):
         "ประเภทการลา": ประเภทการลา,
         "วันที่เริ่ม": str(start_date),
         "วันที่สิ้นสุด": str(end_date),
-        "คิดเป็นจำนวนวันลา": f"{leave_days} วัน",
+        "เวลาเริ่มลา": start_time,
+        "เวลาสิ้นสุดลา": end_time,
+        "คิดเป็นจำนวนวันลา": leave_days,
         "เหตุผล": reason,
-        "เวลาส่ง": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "เวลาส่ง": now_th.strftime("%Y-%m-%d %H:%M:%S")
     }
 
     save_to_sheet(submission)
